@@ -47,6 +47,14 @@
 #include "CSVWriter.h"
 #include <map>
 
+//Adding support for output in Json Format
+#include "nlohmann/json.hpp"
+#include <iostream>
+#include <iomanip>
+#include <string>
+//For convenience
+using json = nlohmann::json;
+
 using namespace std;
 
 namespace DRAMSim
@@ -57,7 +65,8 @@ class MemoryController : public SimulatorObject
 
 public:
 	//functions
-	MemoryController(MemorySystem* ms, CSVWriter &csvOut_, ostream &dramsim_log_);
+	//MemoryController(MemorySystem* ms, CSVWriter &csvOut_, ostream &dramsim_log_);
+	MemoryController(MemorySystem* ms, CSVWriter &csvOut_, json &jsonOut_, ostream &dramsim_log_);
 	virtual ~MemoryController();
 
 	bool addTransaction(Transaction *trans);
@@ -94,7 +103,10 @@ private:
 	vector<Rank *> *ranks;
 
 	//output file
-	CSVWriter &csvOut; 
+	CSVWriter &csvOut;
+
+	// JSON support
+	json &jsonOut; 
 
 	// these packets are counting down waiting to be transmitted on the "bus"
 	BusPacket *outgoingCmdPacket;

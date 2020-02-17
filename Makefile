@@ -56,7 +56,7 @@ $(LIB_NAME_MACOS): $(POBJ)
 
 # build all .cpp files to .o files
 %.o : %.cpp
-	g++ $(CXXFLAGS) -o $@ -c $<
+	g++ $(CXXFLAGS) -g -o $@ -c $<
 
 #po = portable object .. for lack of a better term
 %.po : %.cpp

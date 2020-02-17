@@ -60,12 +60,64 @@ extern float Vdd;
 
 using namespace DRAMSim;
 
-MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, ostream &dramsim_log_) :
+// MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, ostream &dramsim_log_) :
+// 		dramsim_log(dramsim_log_),
+// 		bankStates(NUM_RANKS, vector<BankState>(NUM_BANKS, dramsim_log)),
+// 		commandQueue(bankStates, dramsim_log_),
+// 		poppedBusPacket(NULL),
+// 		csvOut(csvOut_),
+// 		totalTransactions(0),
+// 		refreshRank(0)
+// {
+// 	//get handle on parent
+// 	parentMemorySystem = parent;
+
+
+// 	//bus related fields
+// 	outgoingCmdPacket = NULL;
+// 	outgoingDataPacket = NULL;
+// 	dataCyclesLeft = 0;
+// 	cmdCyclesLeft = 0;
+
+// 	//set here to avoid compile errors
+// 	currentClockCycle = 0;
+
+// 	//reserve memory for vectors
+// 	transactionQueue.reserve(TRANS_QUEUE_DEPTH);
+// 	powerDown = vector<bool>(NUM_RANKS,false);
+// 	grandTotalBankAccesses = vector<uint64_t>(NUM_RANKS*NUM_BANKS,0);
+// 	totalReadsPerBank = vector<uint64_t>(NUM_RANKS*NUM_BANKS,0);
+// 	totalWritesPerBank = vector<uint64_t>(NUM_RANKS*NUM_BANKS,0);
+// 	totalReadsPerRank = vector<uint64_t>(NUM_RANKS,0);
+// 	totalWritesPerRank = vector<uint64_t>(NUM_RANKS,0);
+
+// 	writeDataCountdown.reserve(NUM_RANKS);
+// 	writeDataToSend.reserve(NUM_RANKS);
+// 	refreshCountdown.reserve(NUM_RANKS);
+
+// 	//Power related packets
+// 	backgroundEnergy = vector <uint64_t >(NUM_RANKS,0);
+// 	burstEnergy = vector <uint64_t> (NUM_RANKS,0);
+// 	actpreEnergy = vector <uint64_t> (NUM_RANKS,0);
+// 	refreshEnergy = vector <uint64_t> (NUM_RANKS,0);
+
+// 	totalEpochLatency = vector<uint64_t> (NUM_RANKS*NUM_BANKS,0);
+
+// 	//staggers when each rank is due for a refresh
+// 	for (size_t i=0;i<NUM_RANKS;i++)
+// 	{
+// 		refreshCountdown.push_back((int)((REFRESH_PERIOD/tCK)/NUM_RANKS)*(i+1));
+// 	}
+// }
+
+// NEW constructor to accomodate json
+MemoryController::MemoryController(MemorySystem *parent, CSVWriter &csvOut_, json &jsonOut_, ostream &dramsim_log_) :
 		dramsim_log(dramsim_log_),
 		bankStates(NUM_RANKS, vector<BankState>(NUM_BANKS, dramsim_log)),
 		commandQueue(bankStates, dramsim_log_),
 		poppedBusPacket(NULL),
 		csvOut(csvOut_),
+		jsonOut(jsonOut_),
 		totalTransactions(0),
 		refreshRank(0)
 {
@@ -805,6 +857,9 @@ void MemoryController::printStats(bool finalStats)
 {
 	unsigned myChannel = parentMemorySystem->systemID;
 
+	//Initialize jsonChannel
+	json jsonChannel;
+
 	//if we are not at the end of the epoch, make sure to adjust for the actual number of cycles elapsed
 
 	uint64_t cyclesElapsed = (currentClockCycle % EPOCH_LENGTH == 0) ? EPOCH_LENGTH : currentClockCycle % EPOCH_LENGTH;
@@ -899,12 +954,42 @@ void MemoryController::printStats(bool finalStats)
 			}
 			csvOut << CSVWriter::IndexedName("Rank_Aggregate_Bandwidth",myChannel,r) << totalRankBandwidth; 
 			csvOut << CSVWriter::IndexedName("Rank_Average_Bandwidth",myChannel,r) << totalRankBandwidth/NUM_RANKS; 
+
+
+			//JSON Output for ranks
+			json jsonRank;
+			jsonRank["Background_Power"] = backgroundPower[r];
+			jsonRank["ACT_PRE_Power"] = actprePower[r];
+			jsonRank["Burst_Power"] = burstPower[r];
+			jsonRank["Refresh_Power"] = refreshPower[r];
+			jsonRank["Rank_Aggregate_Bandwidth"] = totalRankBandwidth;
+			jsonRank["Rank_Average_Bandwidth"] = totalRankBandwidth/NUM_RANKS;
+
+
+			for (size_t b=0; b<NUM_BANKS; b++)
+			{
+				json jsonBank;
+				jsonBank["Bandwidth"] = bandwidth[SEQUENTIAL(r,b)];
+				jsonBank["Average_Latency"] = averageLatency[SEQUENTIAL(r,b)];
+				jsonRank["Banks"].push_back(jsonBank);
+				//jsonRank["Banks"][std::to_string(b)] = jsonBank;
+			}
+
+			jsonChannel["Ranks"].push_back(jsonRank);
+			//jsonChannel["Ranks"][std::to_string(r)] = jsonRank;
+			//END JSON Output for ranks
+
+
 		}
 	}
 	if (VIS_FILE_OUTPUT)
 	{
 		csvOut << CSVWriter::IndexedName("Aggregate_Bandwidth",myChannel) << totalAggregateBandwidth;
 		csvOut << CSVWriter::IndexedName("Average_Bandwidth",myChannel) << totalAggregateBandwidth / (NUM_RANKS*NUM_BANKS);
+
+		//JSON Output
+		jsonChannel["Aggregate_Bandwidth"] = totalAggregateBandwidth;
+		jsonChannel["Average_Bandwidth"] = totalAggregateBandwidth / (NUM_RANKS*NUM_BANKS);
 	}
 
 	// only print the latency histogram at the end of the simulation since it clogs the output too much to print every epoch
@@ -924,6 +1009,9 @@ void MemoryController::printStats(bool finalStats)
 			if (VIS_FILE_OUTPUT)
 			{
 				csvOut.getOutputStream() << it->first <<"="<< it->second << endl;
+
+				//JSON Output
+				jsonChannel["Histogram"].push_back(string(to_string(it->first) + "=" + to_string(it->second)));
 			}
 		}
 		if (currentClockCycle % EPOCH_LENGTH == 0)
@@ -954,6 +1042,12 @@ void MemoryController::printStats(bool finalStats)
 #endif
 
 	resetStats();
+
+	jsonOut["ms"][std::to_string(currentClockCycle * tCK * 1E-6)]["Channels"].push_back(jsonChannel);
+	//jsonOut["Channels"][std::to_string(myChannel)] = jsonChannel;
+	//Clear JSON temporarily FOR NOW
+	//std::cout << std::setw(4) << jsonOut << std::endl;
+	//csvOut.getOutputStream() << std::endl << jsonOut << std::endl;
 }
 MemoryController::~MemoryController()
 {

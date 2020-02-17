@@ -47,6 +47,14 @@
 #include "CSVWriter.h"
 #include <deque>
 
+//Adding support for output in Json Format
+#include "nlohmann/json.hpp"
+#include <iostream>
+#include <iomanip>
+#include <string>
+//For convenience
+using json = nlohmann::json;
+
 namespace DRAMSim
 {
 typedef CallbackBase<void,unsigned,uint64_t,uint64_t> Callback_t;
@@ -55,7 +63,8 @@ class MemorySystem : public SimulatorObject
 	ostream &dramsim_log;
 public:
 	//functions
-	MemorySystem(unsigned id, unsigned megsOfMemory, CSVWriter &csvOut_, ostream &dramsim_log_);
+	//MemorySystem(unsigned id, unsigned megsOfMemory, CSVWriter &csvOut_, ostream &dramsim_log_);
+	MemorySystem(unsigned id, unsigned int megsOfMemory, CSVWriter &csvOut_, json &jsonOut_, ostream &dramsim_log_);
 	virtual ~MemorySystem();
 	void update();
 	bool addTransaction(Transaction *trans);
@@ -82,6 +91,7 @@ public:
 
 private:
 	CSVWriter &csvOut;
+	json &jsonOut;
 };
 }
 

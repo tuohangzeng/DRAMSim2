@@ -50,6 +50,10 @@ MultiChannelMemorySystem::MultiChannelMemorySystem(const string &deviceIniFilena
 	clockDomainCrosser(new ClockDomain::Callback<MultiChannelMemorySystem, void>(this, &MultiChannelMemorySystem::actual_update)),
 	csvOut(new CSVWriter(visDataOut))
 {
+	// create new json object
+	jsonOut = new json();
+
+
 	currentClockCycle=0; 
 	if (visFilename)
 		printf("CC VISFILENAME=%s\n",visFilename->c_str());
@@ -94,9 +98,13 @@ MultiChannelMemorySystem::MultiChannelMemorySystem(const string &deviceIniFilena
 		ERROR("Zero channels"); 
 		abort(); 
 	}
+
+
 	for (size_t i=0; i<NUM_CHANS; i++)
 	{
-		MemorySystem *channel = new MemorySystem(i, megsOfMemory/NUM_CHANS, (*csvOut), dramsim_log);
+		//Commented out to use json
+		//MemorySystem *channel = new MemorySystem(i, megsOfMemory/NUM_CHANS, (*csvOut), dramsim_log);
+		MemorySystem *channel = new MemorySystem(i, megsOfMemory/NUM_CHANS, (*csvOut), (*jsonOut), dramsim_log);
 		channels.push_back(channel);
 	}
 }
@@ -272,19 +280,36 @@ void MultiChannelMemorySystem::InitOutputFiles(string traceFilename)
 		filename = out.str();
 
 
-		filename = FilenameWithNumberSuffix(filename, ".vis"); 
-		path.append(filename);
-		cerr << "writing vis file to " <<path<<endl;
+		std::string filenameVis = FilenameWithNumberSuffix(filename, ".vis");
+		std::string filenameJson = FilenameWithNumberSuffix(filename, ".json");
+
+		std::string pathVis = path + filenameVis;
+		std::string pathJson = path + filenameJson;
+		cerr << "writing vis file to " <<pathVis<<endl;
+		cerr << "Writing json file to " << pathJson << endl;
 
 
-		visDataOut.open(path.c_str());
+		visDataOut.open(pathVis.c_str());
+
+		//also open stram for json
+		jsonDataOut.open(pathJson.c_str());
+
 		if (!visDataOut)
 		{
-			ERROR("Cannot open '"<<path<<"'");
+			ERROR("Cannot open '"<<pathVis<<"'");
+			exit(-1);
+		}
+
+		if (!jsonDataOut)
+		{
+			ERROR("Cannot open '"<<pathJson<<"'");
 			exit(-1);
 		}
 		//write out the ini config values for the visualizer tool
 		IniReader::WriteValuesOut(visDataOut);
+
+		// *****************************************************
+		//TODO: Add a function in IniReader that can write to json
 
 	}
 	else
@@ -365,7 +390,17 @@ MultiChannelMemorySystem::~MultiChannelMemorySystem()
 	{	
 		visDataOut.flush();
 		visDataOut.close();
+
+		//json output
+		//TODO: delete when implemented 
+		(*jsonOut)["SysConfig"] = "To be implemented";
+		(*jsonOut)["DeviceConfig"] = "To be implemented";
+
+		jsonDataOut << (*jsonOut) << std::endl;
+		jsonDataOut.flush();
+		jsonDataOut.close();
 	}
+	delete jsonOut;
 }
 void MultiChannelMemorySystem::update()
 {
@@ -382,6 +417,7 @@ void MultiChannelMemorySystem::actual_update()
 	if (currentClockCycle % EPOCH_LENGTH == 0)
 	{
 		(*csvOut) << "ms" <<currentClockCycle * tCK * 1E-6; 
+		//(*jsonOut)[std::to_string(currentClockCycle * tCK * 1E-6)];
 		for (size_t i=0; i<NUM_CHANS; i++)
 		{
 			channels[i]->printStats(false); 

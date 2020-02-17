@@ -4,6 +4,12 @@ results/
 *.dep
 *.deppo
 *.swp
+*.out
 DRAMSim
 libdramsim.a
 libdramsim.so
+batch_test/results_*
+batch_test/*.tmp
+json_test.cc
+*.ini
+batch_test/Simulation.*

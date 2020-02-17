@@ -35,6 +35,13 @@
 #include "ClockDomain.h"
 #include "CSVWriter.h"
 
+//Adding support for output in Json Format
+#include "nlohmann/json.hpp"
+#include <iostream>
+#include <iomanip>
+#include <string>
+//For convenience
+using json = nlohmann::json;
 
 namespace DRAMSim {
 
@@ -67,6 +74,7 @@ class MultiChannelMemorySystem : public SimulatorObject
 
 	//output file
 	std::ofstream visDataOut;
+	std::ofstream jsonDataOut;
 	ofstream dramsim_log; 
 
 	private:
@@ -83,6 +91,7 @@ class MultiChannelMemorySystem : public SimulatorObject
 		static void mkdirIfNotExist(string path);
 		static bool fileExists(string path); 
 		CSVWriter *csvOut; 
+		json *jsonOut;
 
 
 	};
