@@ -128,6 +128,7 @@ extern unsigned NUM_DEVICES;
 #define WRITE_TO_READ_DELAY_R (WL+BL/2+tRTRS-RL) //interrank
 
 extern unsigned JEDEC_DATA_BUS_BITS;
+extern unsigned FACTOR;
 
 //Memory Controller related parameters
 extern unsigned TRANS_QUEUE_DEPTH;

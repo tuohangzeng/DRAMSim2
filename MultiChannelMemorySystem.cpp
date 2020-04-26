@@ -392,9 +392,8 @@ MultiChannelMemorySystem::~MultiChannelMemorySystem()
 		visDataOut.close();
 
 		//json output
-		//TODO: delete when implemented 
-		(*jsonOut)["SysConfig"] = "To be implemented";
-		(*jsonOut)["DeviceConfig"] = "To be implemented";
+
+		IniReader::WriteValueJsonOut(jsonOut);
 
 		jsonDataOut << (*jsonOut) << std::endl;
 		jsonDataOut.flush();

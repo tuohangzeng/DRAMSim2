@@ -54,6 +54,7 @@ unsigned NUM_COLS_LOG;
 unsigned DEVICE_WIDTH;
 unsigned BYTE_OFFSET_WIDTH;
 unsigned TRANSACTION_SIZE;
+unsigned FACTOR;	// The factor is added so that FACTIR=1 => 64B granularity, FACTIR=2 => 128B granularity
 unsigned THROW_AWAY_BITS;
 unsigned COL_LOW_BIT_WIDTH;
 
@@ -182,6 +183,8 @@ static ConfigMap configMap[] =
 
 	DEFINE_UINT_PARAM(NUM_CHANS,SYS_PARAM),
 	DEFINE_UINT_PARAM(JEDEC_DATA_BUS_BITS,SYS_PARAM),
+	// added FACTOR as one of the system parameters
+	DEFINE_UINT_PARAM(FACTOR,SYS_PARAM),
 
 	//Memory Controller related parameters
 	DEFINE_UINT_PARAM(TRANS_QUEUE_DEPTH,SYS_PARAM),
@@ -250,6 +253,48 @@ void IniReader::WriteParams(std::ofstream &visDataOut, paramType type)
 		visDataOut<<"NUM_RANKS="<<NUM_RANKS <<"\n";
 	}
 }
+
+// A method to parse the data into a json file, similar to the regular vis parser
+void IniReader::WriteParamsJson(json &j, paramType type)
+{
+	for (size_t i=0; configMap[i].variablePtr != NULL; i++)
+	{
+		if (configMap[i].parameterType == type)
+		{
+			switch (configMap[i].variableType)
+			{
+				//parse and set each type of variable
+			case UINT:
+				j[configMap[i].iniKey] = *((unsigned *)configMap[i].variablePtr);
+				break;
+			case UINT64:
+				j[configMap[i].iniKey] =  *((uint64_t *)configMap[i].variablePtr);
+				break;
+			case FLOAT:
+				j[configMap[i].iniKey] =  *((float *)configMap[i].variablePtr);
+				break;
+			case STRING:
+				j[configMap[i].iniKey] =  *((string *)configMap[i].variablePtr);
+				break;
+			case BOOL:
+				if (*((bool *)configMap[i].variablePtr))
+				{
+					j[configMap[i].iniKey] = true;
+				}
+				else
+				{
+					j[configMap[i].iniKey] = false;
+				}
+				break;
+			}
+		}
+	}
+	if (type == SYS_PARAM)
+	{
+		j["NUM_RANKS"] = NUM_RANKS;
+	}
+}
+
 void IniReader::WriteValuesOut(std::ofstream &visDataOut)
 {
 	visDataOut<<"!!SYSTEM_INI"<<endl;
@@ -260,6 +305,18 @@ void IniReader::WriteValuesOut(std::ofstream &visDataOut)
 	WriteParams(visDataOut, DEV_PARAM); 
 	visDataOut<<"!!EPOCH_DATA"<<endl;
 
+}
+
+// Additional support method for outputing in json file
+void IniReader::WriteValueJsonOut(json *j) {
+	json sysParam;
+	json devParam;
+
+	WriteParamsJson(sysParam,SYS_PARAM);
+	WriteParamsJson(devParam,DEV_PARAM);
+
+	(*j)["DeviceConfig"] = devParam;
+	(*j)["SysConfig"] = sysParam;
 }
 
 void IniReader::SetKey(string key, string valueString, bool isSystemParam, size_t lineNumber)

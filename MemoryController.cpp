@@ -337,7 +337,7 @@ void MemoryController::update()
 	{
 		if (poppedBusPacket->busPacketType == WRITE || poppedBusPacket->busPacketType == WRITE_P)
 		{
-
+			
 			writeDataToSend.push_back(new BusPacket(DATA, poppedBusPacket->physicalAddress, poppedBusPacket->column,
 			                                    poppedBusPacket->row, poppedBusPacket->rank, poppedBusPacket->bank,
 			                                    poppedBusPacket->data, dramsim_log));
@@ -541,6 +541,102 @@ void MemoryController::update()
 
 	}
 
+
+	//check for outstanding data to return to the CPU/ or issue WRITE CMD for pending Writes
+	//..moved to here so that pending write commands always get the priority in execution
+	if (returnTransaction.size()>0)
+	{
+		if (DEBUG_BUS)
+		{
+			PRINTN(" -- MC Issuing to CPU bus : " << *returnTransaction[0]);
+		}
+		totalTransactions++;
+
+		bool foundMatch=false;
+		// returnTransaction in fifo, pendingWrite can be out of order, depending on which on comes back first
+
+		// ADD: Process transactions pending to be written
+		for (size_t i=0;i<pendingWriteTransactions.size();i++)
+		{
+
+			// if the original data is back and matched
+			if (pendingWriteTransactions[i]->address == returnTransaction[0]->address)
+			{
+				PRINT("pendingWrite Found, ISS to CMDQ");
+				PRINT(hex<<pendingWriteTransactions[i]->address <<dec<< " <pWrite=rtnTran0> " <<hex<< returnTransaction[0]->address<<dec<<"   rtnTranSize:" <<returnTransaction.size());
+
+				Transaction *transaction = pendingWriteTransactions[i];
+				unsigned newTransactionChan, newTransactionRank, newTransactionBank, newTransactionRow, newTransactionColumn;
+				addressMapping(transaction->address, newTransactionChan, newTransactionRank, newTransactionBank, newTransactionRow, newTransactionColumn);
+				if (commandQueue.hasRoomFor(2, newTransactionRank, newTransactionBank)) {
+
+					//create activate command to the row we just translated
+					BusPacket *ACTcommand = new BusPacket(ACTIVATE, transaction->address,
+							newTransactionColumn, newTransactionRow, newTransactionRank,
+							newTransactionBank, 0, dramsim_log);
+
+					//create read or WRITE command and enqueue it
+					BusPacketType bpType = transaction->getBusPacketType();
+					BusPacket *command = new BusPacket(bpType, transaction->address,
+							newTransactionColumn, newTransactionRow, newTransactionRank,
+							newTransactionBank, transaction->data, dramsim_log);
+
+
+					commandQueue.enqueue(ACTcommand);
+					commandQueue.enqueue(command);
+					delete pendingWriteTransactions[i];
+					pendingWriteTransactions.erase(pendingWriteTransactions.begin()+i);
+					foundMatch=true; 
+				}
+				break;
+			}
+		}
+
+		//find the pending read transaction to calculate latency
+		for (size_t i=0;i<pendingReadTransactions.size();i++)
+		{
+			// skip through for loop if already addressed
+			if(foundMatch) break;
+
+			if (pendingReadTransactions[i]->address == returnTransaction[0]->address)
+			{
+				PRINT("pendingRead Found, rtn to CPU");
+				PRINT(hex<<pendingReadTransactions[i]->address <<dec<< " <pRead=rtnTran0> " <<hex<< returnTransaction[0]->address<<dec<<"   rtnTranSize:" <<returnTransaction.size());
+				//if(currentClockCycle - pendingReadTransactions[i]->timeAdded > 2000)
+				//	{
+				//		pendingReadTransactions[i]->print();
+				//		exit(0);
+				//	}
+				unsigned chan,rank,bank,row,col;
+				addressMapping(returnTransaction[0]->address,chan,rank,bank,row,col);
+				insertHistogram(currentClockCycle-pendingReadTransactions[i]->timeAdded,rank,bank);
+
+				//inserthistogram?
+
+				//return latency
+				returnReadData(pendingReadTransactions[i]);
+
+				delete pendingReadTransactions[i];
+				pendingReadTransactions.erase(pendingReadTransactions.begin()+i);
+				foundMatch=true; 
+				break;
+			}
+		}
+		
+		// if neither a pending read transaction or a pending write transaction
+		if (!foundMatch)
+		{
+			ERROR("Can't find a matching transaction for 0x"<<hex<<returnTransaction[0]->address<<dec);
+			PRINT("Size of returnTransaction" << returnTransaction.size());
+			// allow it to continue as there may not be room for adding new writes
+			//abort();
+		} else {
+			delete returnTransaction[0];
+			returnTransaction.erase(returnTransaction.begin());
+		}
+	}
+
+	// process transactionQueue
 	for (size_t i=0;i<transactionQueue.size();i++)
 	{
 		//pop off top transaction from queue
@@ -586,27 +682,64 @@ void MemoryController::update()
 					newTransactionColumn, newTransactionRow, newTransactionRank,
 					newTransactionBank, 0, dramsim_log);
 
-			//create read or write command and enqueue it
-			BusPacketType bpType = transaction->getBusPacketType();
-			BusPacket *command = new BusPacket(bpType, transaction->address,
-					newTransactionColumn, newTransactionRow, newTransactionRank,
-					newTransactionBank, transaction->data, dramsim_log);
+			// Depending on the factor, decide what cmd to issue.
+			// 64B does not need additional R for every W
+			if (FACTOR > 1) {
+				// For granularities other than 64B
+				//create READ or write command and enqueue it
+				BusPacketType bpType = transaction->getBusPacketType();
+				
+				// ADD: Convert Read/Write to Read no matter what was the actual transaction
+				if (bpType == WRITE_P) bpType = READ_P;
+				if (bpType == WRITE) bpType = READ;
 
+				BusPacket *command = new BusPacket(bpType, transaction->address,
+						newTransactionColumn, newTransactionRow, newTransactionRank,
+						newTransactionBank, transaction->data, dramsim_log);
 
+				commandQueue.enqueue(ACTcommand);
+				commandQueue.enqueue(command);
+			} else {
+				//create READ or write command and enqueue it
+				BusPacketType bpType = transaction->getBusPacketType();
 
-			commandQueue.enqueue(ACTcommand);
-			commandQueue.enqueue(command);
+				BusPacket *command = new BusPacket(bpType, transaction->address,
+						newTransactionColumn, newTransactionRow, newTransactionRank,
+						newTransactionBank, transaction->data, dramsim_log);
+
+				commandQueue.enqueue(ACTcommand);
+				commandQueue.enqueue(command);
+			}
 
 			// If we have a read, save the transaction so when the data comes back
 			// in a bus packet, we can staple it back into a transaction and return it
-			if (transaction->transactionType == DATA_READ)
-			{
-				pendingReadTransactions.push_back(transaction);
-			}
-			else
-			{
-				// just delete the transaction now that it's a buspacket
-				delete transaction; 
+
+			// ADD: If we have a Write, put it into the pendingWriteTransactions for later
+			// when we pull out of the pendingWriteTransaction to issue a REAL WRITE
+
+			if (FACTOR > 1) {
+				if (transaction->transactionType == DATA_READ)
+				{
+					pendingReadTransactions.push_back(transaction);
+				}
+				else		// DATA_WRITE
+				{
+					//// just delete the transaction now that it's a buspacket
+					//delete transaction; 
+
+					// ADD: push back into pending Write Queue
+					pendingWriteTransactions.push_back(transaction);
+				}
+			} else {
+				if (transaction->transactionType == DATA_READ)
+				{
+					pendingReadTransactions.push_back(transaction);
+				}
+				else		// DATA_WRITE
+				{
+					// just delete the transaction now that it's a buspacket
+					delete transaction; 
+				}
 			}
 			/* only allow one transaction to be scheduled per cycle -- this should
 			 * be a reasonable assumption considering how much logic would be
@@ -617,7 +750,7 @@ void MemoryController::update()
 		}
 		else // no room, do nothing this cycle
 		{
-			//PRINT( "== Warning - No room in command queue" << endl;
+			PRINT( "== Warning - No room in command queue" << endl);
 		}
 	}
 
@@ -710,46 +843,7 @@ void MemoryController::update()
 		}
 	}
 
-	//check for outstanding data to return to the CPU
-	if (returnTransaction.size()>0)
-	{
-		if (DEBUG_BUS)
-		{
-			PRINTN(" -- MC Issuing to CPU bus : " << *returnTransaction[0]);
-		}
-		totalTransactions++;
-
-		bool foundMatch=false;
-		//find the pending read transaction to calculate latency
-		for (size_t i=0;i<pendingReadTransactions.size();i++)
-		{
-			if (pendingReadTransactions[i]->address == returnTransaction[0]->address)
-			{
-				//if(currentClockCycle - pendingReadTransactions[i]->timeAdded > 2000)
-				//	{
-				//		pendingReadTransactions[i]->print();
-				//		exit(0);
-				//	}
-				unsigned chan,rank,bank,row,col;
-				addressMapping(returnTransaction[0]->address,chan,rank,bank,row,col);
-				insertHistogram(currentClockCycle-pendingReadTransactions[i]->timeAdded,rank,bank);
-				//return latency
-				returnReadData(pendingReadTransactions[i]);
-
-				delete pendingReadTransactions[i];
-				pendingReadTransactions.erase(pendingReadTransactions.begin()+i);
-				foundMatch=true; 
-				break;
-			}
-		}
-		if (!foundMatch)
-		{
-			ERROR("Can't find a matching transaction for 0x"<<hex<<returnTransaction[0]->address<<dec);
-			abort(); 
-		}
-		delete returnTransaction[0];
-		returnTransaction.erase(returnTransaction.begin());
-	}
+	
 
 	//decrement refresh counters
 	for (size_t i=0;i<NUM_RANKS;i++)
@@ -807,6 +901,8 @@ void MemoryController::update()
 		commandQueue.print();
 	}
 
+
+	//cmdQ step ++CC
 	commandQueue.step();
 
 }
@@ -863,7 +959,11 @@ void MemoryController::printStats(bool finalStats)
 	//if we are not at the end of the epoch, make sure to adjust for the actual number of cycles elapsed
 
 	uint64_t cyclesElapsed = (currentClockCycle % EPOCH_LENGTH == 0) ? EPOCH_LENGTH : currentClockCycle % EPOCH_LENGTH;
-	unsigned bytesPerTransaction = (JEDEC_DATA_BUS_BITS*BL)/8;
+	unsigned bytesPerTransaction = (JEDEC_DATA_BUS_BITS*BL)/8*FACTOR;
+	// ^  Don't know why it was (JEDEC_DATA_BUS_BITS*BL)/8
+	// My interpretation is that this represents the amount of bytes that each transaction, 
+	// when translated into cmd, is supposed to handle
+
 	uint64_t totalBytesTransferred = totalTransactions * bytesPerTransaction;
 	double secondsThisEpoch = (double)cyclesElapsed * tCK * 1E-9;
 
@@ -902,6 +1002,7 @@ void MemoryController::printStats(bool finalStats)
 	PRINT( " ============== Printing Statistics [id:"<<parentMemorySystem->systemID<<"]==============" );
 	PRINTN( "   Total Return Transactions : " << totalTransactions );
 	PRINT( " ("<<totalBytesTransferred <<" bytes) aggregate average bandwidth "<<totalBandwidth<<"GB/s");
+	PRINT("FACTOR " << FACTOR << " TXN SIZE " << TRANSACTION_SIZE << " B/TXN " << bytesPerTransaction);
 
 	double totalAggregateBandwidth = 0.0;	
 	for (size_t r=0;r<NUM_RANKS;r++)

@@ -38,6 +38,14 @@
 #include <map> 
 #include "SystemConfiguration.h"
 
+//Adding support for output in Json Format
+#include "nlohmann/json.hpp"
+#include <iostream>
+#include <iomanip>
+#include <string>
+//For convenience
+using json = nlohmann::json;
+
 using namespace std;
 
 #define DEFINE_UINT_PARAM(name, paramtype) {#name, &name, UINT, paramtype, false}
@@ -74,6 +82,7 @@ public:
 	static void InitEnumsFromStrings();
 	static bool CheckIfAllSet();
 	static void WriteValuesOut(std::ofstream &visDataOut);
+	static void WriteValueJsonOut(json *j); // Adding support for json output
 	static int getBool(const std::string &field, bool *val);
 	static int getUint(const std::string &field, unsigned int *val);
 	static int getUint64(const std::string &field, uint64_t *val);
@@ -81,6 +90,7 @@ public:
 
 private:
 	static void WriteParams(std::ofstream &visDataOut, paramType t);
+	static void WriteParamsJson(json &j, paramType type);	// Adding support for json output
 	static void Trim(string &str);
 };
 }
